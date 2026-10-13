@@ -4,25 +4,22 @@ import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 import getCountryIso3 from "country-iso-2-to-3";
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export const getProducts = async (req, res) => {
   try {
     const products = await Product.find();
 
     const productsWithStats = await Promise.all(
       products.map(async (product) => {
-        const stat = await ProductStat.find({
-          productId: product._id,
-        });
-        return {
-          ...product._doc,
-          stat,
-        };
+        const stat = await ProductStat.find({ productId: product._id });
+        return { ...product._doc, stat };
       })
     );
 
     res.status(200).json(productsWithStats);
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -31,70 +28,67 @@ export const getCustomers = async (req, res) => {
     const customers = await User.find({ role: "user" }).select("-password");
     res.status(200).json(customers);
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
+/**
+ * Server-side paginated, sortable, searchable transactions.
+ * Query params:
+ *   page      zero-based page index (MUI DataGrid convention)
+ *   pageSize  rows per page
+ *   sort      JSON string, e.g. {"field":"userId","sort":"desc"}
+ *   search    case-insensitive match on cost or userId
+ */
 export const getTransactions = async (req, res) => {
   try {
-    // sort should look like this: { "field": "userId", "sort": "desc"}
-    const { page = 1, pageSize = 20, sort = null, search = "" } = req.query;
+    const page = Math.max(0, parseInt(req.query.page, 10) || 0);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+    const search = escapeRegex(String(req.query.search || ""));
 
-    // formatted sort should look like { userId: -1 }
-    const generateSort = () => {
-      const sortParsed = JSON.parse(sort);
-      const sortFormatted = {
-        [sortParsed.field]: (sortParsed.sort = "asc" ? 1 : -1),
-      };
+    let sortFormatted = {};
+    if (req.query.sort) {
+      const { field, sort } = JSON.parse(req.query.sort);
+      if (field) sortFormatted = { [field]: sort === "asc" ? 1 : -1 };
+    }
 
-      return sortFormatted;
-    };
-    const sortFormatted = Boolean(sort) ? generateSort() : {};
-
-    const transactions = await Transaction.find({
+    const filter = {
       $or: [
-        { cost: { $regex: new RegExp(search, "i") } },
-        { userId: { $regex: new RegExp(search, "i") } },
+        { cost: { $regex: search, $options: "i" } },
+        { userId: { $regex: search, $options: "i" } },
       ],
-    })
-      .sort(sortFormatted)
-      .skip(page * pageSize)
-      .limit(pageSize);
+    };
 
-    const total = await Transaction.countDocuments({
-      name: { $regex: search, $options: "i" },
-    });
+    const [transactions, total] = await Promise.all([
+      Transaction.find(filter)
+        .sort(sortFormatted)
+        .skip(page * pageSize)
+        .limit(pageSize),
+      Transaction.countDocuments(filter),
+    ]);
 
-    res.status(200).json({
-      transactions,
-      total,
-    });
+    res.status(200).json({ transactions, total });
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
 export const getGeography = async (req, res) => {
   try {
-    const users = await User.find();
+    const users = await User.find().select("country");
 
-    const mappedLocations = users.reduce((acc, { country }) => {
-      const countryISO3 = getCountryIso3(country);
-      if (!acc[countryISO3]) {
-        acc[countryISO3] = 0;
-      }
-      acc[countryISO3]++;
+    const countsByCountry = users.reduce((acc, { country }) => {
+      const iso3 = getCountryIso3(country);
+      acc[iso3] = (acc[iso3] || 0) + 1;
       return acc;
     }, {});
 
-    const formattedLocations = Object.entries(mappedLocations).map(
-      ([country, count]) => {
-        return { id: country, value: count };
-      }
+    const formattedLocations = Object.entries(countsByCountry).map(
+      ([country, count]) => ({ id: country, value: count })
     );
 
     res.status(200).json(formattedLocations);
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };

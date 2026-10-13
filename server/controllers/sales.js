@@ -2,10 +2,10 @@ import OverallStat from "../models/OverallStat.js";
 
 export const getSales = async (req, res) => {
   try {
-    const overallStats = await OverallStat.find();
-
-    res.status(200).json(overallStats[0]);
+    const overallStat = await OverallStat.findOne();
+    if (!overallStat) return res.status(404).json({ message: "No sales data found" });
+    res.status(200).json(overallStat);
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };

@@ -2,46 +2,40 @@ import User from "../models/User.js";
 import OverallStat from "../models/OverallStat.js";
 import Transaction from "../models/Transaction.js";
 
+// The seed data covers 2021, so the dashboard reports as of this fixed date.
+const REPORT_YEAR = 2021;
+const REPORT_MONTH = "November";
+const REPORT_DAY = "2021-11-15";
+
 export const getUser = async (req, res) => {
   try {
-    const { id } = req.params;
-    const user = await User.findById(id);
+    const user = await User.findById(req.params.id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
     res.status(200).json(user);
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
 export const getDashboardStats = async (req, res) => {
   try {
-    // hardcoded values
-    const currentMonth = "November";
-    const currentYear = 2021;
-    const currentDay = "2021-11-15";
+    const [transactions, overallStat] = await Promise.all([
+      Transaction.find().limit(50).sort({ createdOn: -1 }),
+      OverallStat.findOne({ year: REPORT_YEAR }),
+    ]);
 
-    /* Recent Transactions */
-    const transactions = await Transaction.find()
-      .limit(50)
-      .sort({ createdOn: -1 });
-
-    /* Overall Stats */
-    const overallStat = await OverallStat.find({ year: currentYear });
+    if (!overallStat) {
+      return res.status(404).json({ message: `No stats found for ${REPORT_YEAR}` });
+    }
 
     const {
       totalCustomers,
       yearlyTotalSoldUnits,
       yearlySalesTotal,
       monthlyData,
+      dailyData,
       salesByCategory,
-    } = overallStat[0];
-
-    const thisMonthStats = overallStat[0].monthlyData.find(({ month }) => {
-      return month === currentMonth;
-    });
-
-    const todayStats = overallStat[0].dailyData.find(({ date }) => {
-      return date === currentDay;
-    });
+    } = overallStat;
 
     res.status(200).json({
       totalCustomers,
@@ -49,11 +43,11 @@ export const getDashboardStats = async (req, res) => {
       yearlySalesTotal,
       monthlyData,
       salesByCategory,
-      thisMonthStats,
-      todayStats,
+      thisMonthStats: monthlyData.find(({ month }) => month === REPORT_MONTH),
+      todayStats: dailyData.find(({ date }) => date === REPORT_DAY),
       transactions,
     });
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };

@@ -7,15 +7,18 @@ export const getAdmins = async (req, res) => {
     const admins = await User.find({ role: "admin" }).select("-password");
     res.status(200).json(admins);
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
 export const getUserPerformance = async (req, res) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
 
-    const userWithStats = await User.aggregate([
+    const [userWithStats] = await User.aggregate([
       { $match: { _id: new mongoose.Types.ObjectId(id) } },
       {
         $lookup: {
@@ -26,21 +29,19 @@ export const getUserPerformance = async (req, res) => {
         },
       },
       { $unwind: "$affiliateStats" },
+      { $project: { password: 0 } },
     ]);
 
-    const saleTransactions = await Promise.all(
-      userWithStats[0].affiliateStats.affiliateSales.map((id) => {
-        return Transaction.findById(id);
-      })
-    );
-    const filteredSaleTransactions = saleTransactions.filter(
-      (transaction) => transaction !== null
-    );
+    if (!userWithStats) {
+      return res.status(404).json({ message: "No performance data for this user" });
+    }
 
-    res
-      .status(200)
-      .json({ user: userWithStats[0], sales: filteredSaleTransactions });
+    const sales = await Transaction.find({
+      _id: { $in: userWithStats.affiliateStats.affiliateSales },
+    });
+
+    res.status(200).json({ user: userWithStats, sales });
   } catch (error) {
-    res.status(404).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
